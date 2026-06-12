@@ -4,22 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BoratLogic | Linktree</title>
-    <!-- Favicon -->
     <link rel="icon" href="https://avatars.githubusercontent.com/u/27607734" type="image/x-icon" />
-    <!-- Font Awesome icons -->
     <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.8.1/css/all.css">
-    <!-- Core theme CSS -->
     <link rel="stylesheet" href="style.css">
   </head>
 
   <body>
-    <!-- Parallax Pixel Background Animation -->
-    <section class="animated-background">
-      <div id="stars1"></div>
-      <div id="stars2"></div>
-      <div id="stars3"></div>
-    </section>
-    <!-- End of Parallax Pixel Background Animation -->
+
+    <canvas id="bgCanvas"></canvas>
 
     <a id="profilePicture" href="#popup">
       <img src="https://avatars.githubusercontent.com/u/27607734" alt="Profile Picture">
@@ -39,9 +31,7 @@
       </div>
     </div>
 
-    <div id="userName">
-      @boratlogic
-    </div>
+    <div id="userName">@boratlogic</div>
 
     <div id="links">
       <a class="link" href="https://github.com/boratlogic" target="_blank">
@@ -49,9 +39,7 @@
       </a>
     </div>
 
-    <div id="userName">
-      Some  projects
-    </div>
+    <div id="userName">Some projects</div>
 
     <div id="links">
       <a class="link" href="https://github.com/LogicRescue" target="_blank">
@@ -65,8 +53,283 @@
       </a>
     </div>
 
-    <div id="hashtag">
-      ⚡ #DrivenByLogic 🔌
-    </div>
+    <div id="hashtag">⚡ #DrivenByLogic 🔌</div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        const canvas = document.getElementById('bgCanvas');
+        const ctx    = canvas.getContext('2d');
+
+        const LABELS      = ['FSL0gic', 'BoratLogic', 'RescueLogic'];
+        const COUNT       = 11;      // bubbles on screen
+
+        /*
+         * ADAPTIVE LINK_R
+         * ─────────────────────────────────────────────────────────
+         * linkR is NOT fixed. Every frame updateLinkR() looks at how
+         * far each bubble is from its nearest neighbour, sorts those
+         * distances, and picks the percentile that matches
+         * TARGET_CONN (80 %).  That value is then approached smoothly
+         * via exponential interpolation so the radius never jumps.
+         *
+         * Hard-cap MAX_LINK_R stops absurdly long lines when all
+         * bubbles cluster in one corner.
+         * ─────────────────────────────────────────────────────────
+         */
+		const TARGET_CONN = 0.80;   // 80 % aller Bubbles haben ≥ MIN_DEGREE Verbindungen
+		const MIN_DEGREE  = 8;      // jede "verbundene" Bubble braucht mindestens 2 Linien
+		const SMOOTH      = 0.12;   // doppelt so schnell wie vorher (0.032 → 0.06)
+
+		let W, H, t = 0;
+		let linkR;                  // erst nach resize() gesetzt → screen-relativ
+
+        /* ── resize ──────────────────────────────────────── */
+        function resize() {
+            W = canvas.width  = window.innerWidth;
+            H = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        /* ── Bubble class ─────────────────────────────────── */
+        class Bubble {
+            constructor() { this.reset(true); }
+
+            reset(init) {
+                this.x  = init ? Math.random() * W : (Math.random() < 0.5 ? -60 : W + 60);
+                this.y  = Math.random() * H;
+                this.r0 = 26 + Math.random() * 42;
+                this.label = LABELS[Math.floor(Math.random() * LABELS.length)];
+
+                const spd = 0.10 + Math.random() * 0.22;
+                const ang = Math.random() * Math.PI * 2;
+                this.vx = Math.cos(ang) * spd;
+                this.vy = Math.sin(ang) * spd;
+
+                // two-wave wobble
+                this.wp1 = Math.random() * Math.PI * 2;
+                this.ws1 = 0.005 + Math.random() * 0.009;
+                this.wa1 = 4 + Math.random() * 6;
+                this.wp2 = Math.random() * Math.PI * 2;
+                this.ws2 = 0.004 + Math.random() * 0.007;
+                this.wa2 = 4 + Math.random() * 6;
+
+                // pulse
+                this.pp = Math.random() * Math.PI * 2;
+                this.ps = 0.009 + Math.random() * 0.015;
+
+                // unique phase offset keeps particles on every connection de-synced
+                this.eo = Math.random();
+
+                this.px = this.x;
+                this.py = this.y;
+            }
+
+            tick() {
+                this.x += this.vx;
+                this.y += this.vy;
+
+                const m = this.r0 + 12;
+                if (this.x < m)     this.vx =  Math.abs(this.vx);
+                if (this.x > W - m) this.vx = -Math.abs(this.vx);
+                if (this.y < m)     this.vy =  Math.abs(this.vy);
+                if (this.y > H - m) this.vy = -Math.abs(this.vy);
+
+                this.wp1 += this.ws1;
+                this.wp2 += this.ws2;
+                this.pp  += this.ps;
+
+                this.px = this.x + this.wa1 * Math.sin(this.wp1);
+                this.py = this.y + this.wa2 * Math.cos(this.wp2);
+            }
+
+            draw() {
+                ctx.save();
+                const s = Math.sin(this.pp);
+                const r = this.r0 * (1 + 0.09 * s);
+
+                // outer glow halo
+                const glow = ctx.createRadialGradient(
+                    this.px, this.py, r * 0.2,
+                    this.px, this.py, r * 2.6
+                );
+                glow.addColorStop(0, `rgba(50,165,255,${0.08 + 0.07 * s})`);
+                glow.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.beginPath();
+                ctx.arc(this.px, this.py, r * 2.6, 0, Math.PI * 2);
+                ctx.fillStyle = glow;
+                ctx.fill();
+
+                // glass sphere fill
+                const fill = ctx.createRadialGradient(
+                    this.px - r * 0.28, this.py - r * 0.30, r * 0.04,
+                    this.px, this.py, r
+                );
+                fill.addColorStop(0,    'rgba(255,255,255,0.26)');
+                fill.addColorStop(0.45, 'rgba(100,185,255,0.10)');
+                fill.addColorStop(1,    'rgba(18,52,138,0.08)');
+                ctx.beginPath();
+                ctx.arc(this.px, this.py, r, 0, Math.PI * 2);
+                ctx.fillStyle = fill;
+                ctx.fill();
+
+                // pulsing border ring
+                ctx.beginPath();
+                ctx.arc(this.px, this.py, r, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(175,225,255,${0.25 + 0.22 * s})`;
+                ctx.lineWidth   = 1.5;
+                ctx.stroke();
+
+                // specular shine arc
+                ctx.beginPath();
+                ctx.arc(
+                    this.px - r * 0.13, this.py - r * 0.15,
+                    r * 0.46,
+                    Math.PI * 1.10, Math.PI * 1.72
+                );
+                ctx.strokeStyle = `rgba(255,255,255,${0.15 + 0.11 * s})`;
+                ctx.lineWidth   = 2;
+                ctx.stroke();
+
+                // label
+                ctx.font         = `bold ${Math.max(r * 0.30, 9)}px 'Karla', sans-serif`;
+                ctx.textAlign    = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle    = `rgba(255,255,255,${0.60 + 0.30 * s})`;
+                ctx.fillText(this.label, this.px, this.py);
+
+                ctx.restore();
+            }
+        }
+
+		// ─── resize: linkR einmalig initialisieren ───────────────────────────────────
+		function resize() {
+			W = canvas.width  = window.innerWidth;
+			H = canvas.height = window.innerHeight;
+			if (!linkR) linkR = Math.hypot(W, H) * 0.35;   // sinnvoller Startwert
+		}
+
+        /* ── Adaptive LINK_R ──────────────────────────────── */
+        // ─── updateLinkR(): K-Nearest-Neighbour-Perzentil ────────────────────────────
+		function updateLinkR() {
+			const n    = bubbles.length;
+			const maxR = Math.hypot(W, H) * 0.55;   // Deckel = 55 % der Diagonale, immer screen-relativ
+
+			/*
+			 * Für jede Bubble: Abstand zum MIN_DEGREE-ten nächsten Nachbarn.
+			 * Wenn linkR auf den TARGET_CONN-Perzentilwert dieser Liste gesetzt wird,
+			 * haben (TARGET_CONN × 100) % aller Bubbles ≥ MIN_DEGREE Verbindungen.
+			 */
+			const kDists = bubbles.map((a, i) => {
+				const ds = [];
+				for (let j = 0; j < n; j++) {
+					if (i === j) continue;
+					ds.push(Math.hypot(bubbles[j].px - a.px, bubbles[j].py - a.py));
+				}
+				ds.sort((a, b) => a - b);
+				// MIN_DEGREE-ter nächster Nachbar (0-indiziert: MIN_DEGREE - 1)
+				return ds[Math.min(MIN_DEGREE - 1, ds.length - 1)];
+			});
+
+			const sorted = [...kDists].sort((a, b) => a - b);
+			const idx    = Math.ceil(n * TARGET_CONN) - 1;
+			const target = Math.min(sorted[Math.min(idx, sorted.length - 1)], maxR);
+
+			linkR += (target - linkR) * SMOOTH;   // exponentieller Smooth
+		}
+
+        /* ── Particle helper ──────────────────────────────── */
+        function drawParticle(x, y, alpha, size) {
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+            ctx.beginPath();
+            ctx.arc(x, y, size * 0.45, 0, Math.PI * 2);
+            ctx.fillStyle   = 'rgba(220,245,255,1)';
+            ctx.shadowBlur  = size * 2.2;
+            ctx.shadowColor = 'rgba(90,210,255,1)';
+            ctx.fill();
+            ctx.restore();
+        }
+
+        /* ── Connections (one line per pair) ──────────────── */
+        function drawConnections() {
+            ctx.save();
+
+            for (let i = 0; i < bubbles.length; i++) {
+                for (let j = i + 1; j < bubbles.length; j++) {
+                    const a  = bubbles[i];
+                    const b  = bubbles[j];
+                    const dx = b.px - a.px;
+                    const dy = b.py - a.py;
+                    const d  = Math.hypot(dx, dy);
+                    if (d >= linkR) continue;
+
+                    /*
+                     * str: connection strength – falls off steeply toward linkR
+                     * so that newly-included long connections stay visually subtle
+                     * and don't clutter the screen.
+                     */
+                    const str   = Math.pow(1 - d / linkR, 2.2);
+                    const pulse = 0.45 + 0.55 *
+                        Math.sin(a.pp * 0.55 + b.pp * 0.45 + t * 0.016);
+
+                    // glowing gradient line
+                    const lg = ctx.createLinearGradient(a.px, a.py, b.px, b.py);
+                    lg.addColorStop(0,   `rgba(70,185,255,${str * 0.22 * pulse})`);
+                    lg.addColorStop(0.5, `rgba(175,235,255,${str * 0.58 * pulse})`);
+                    lg.addColorStop(1,   `rgba(70,185,255,${str * 0.22 * pulse})`);
+
+                    ctx.beginPath();
+                    ctx.moveTo(a.px, a.py);
+                    ctx.lineTo(b.px, b.py);
+                    ctx.strokeStyle = lg;
+                    ctx.lineWidth   = 0.7 + str * 1.5;
+                    ctx.shadowBlur  = 14;
+                    ctx.shadowColor = `rgba(50,165,255,${str * 0.65})`;
+                    ctx.stroke();
+                    ctx.shadowBlur  = 0;
+
+                    // energy particle  A → B
+                    const sp1 = 0.00048 + ((i * 5 + j * 4) % 9) * 0.000075;
+                    const ph1 = (t * sp1 + a.eo) % 1;
+                    drawParticle(
+                        a.px + dx * ph1,
+                        a.py + dy * ph1,
+                        str * 0.95, 7
+                    );
+
+                    // energy particle  B → A  (opposite direction)
+                    const sp2 = 0.00040 + ((i * 3 + j * 7) % 7) * 0.000090;
+                    const ph2 = 1 - (t * sp2 + b.eo) % 1;
+                    drawParticle(
+                        a.px + dx * ph2,
+                        a.py + dy * ph2,
+                        str * 0.65, 5
+                    );
+                }
+            }
+
+            ctx.restore();
+        }
+
+        /* ── Pool + loop ──────────────────────────────────── */
+        const bubbles = Array.from({ length: COUNT }, () => new Bubble());
+
+        function loop() {
+            ctx.clearRect(0, 0, W, H);
+            bubbles.forEach(b => b.tick());
+            updateLinkR();          // ← re-evaluate threshold every frame
+            drawConnections();      // behind bubbles
+            bubbles.forEach(b => b.draw());
+            t++;
+            requestAnimationFrame(loop);
+        }
+        loop();
+
+    }());
+    </script>
+
   </body>
 </html>
